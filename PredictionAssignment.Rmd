@@ -1,0 +1,207 @@
+---
+title: "Prediction Assignment"
+author: "Paresh Pandey"
+date: "10/4/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Model Approach
+
+### Data Partition
+
+- Broke the training set provided into Train,Validate and Test
+
+- Training data was split into Training and Test (80%-20%)
+
+- Training was further split into Train and Validate (80%-20%), so eventually 64% of data was used for training while 16 % went for validation and 20% for Testing
+
+### Model Approach
+
+- Approach was to first build two models : Random Forest and Boosted Tree.
+- Perform Model stacking of the above two models to see if Accuracy improves.
+
+### Cross Validation
+
+Five K-fold cross validation performed for both Random Forest and Boosted Trees
+
+## Data Cleaning and Partition
+
+```{r datasets}
+library(caret)
+
+# Loading the data
+pmltrainingset<-read.csv("pml-training.csv", na.strings=c("NA","#DIV/0!", ""))
+pmltestset<-read.csv("pml-testing.csv" , na.strings=c("NA","#DIV/0!", ""))
+
+
+
+# remove columns with NAs
+
+pmltrainingset<-pmltrainingset[,colSums(is.na(pmltrainingset)) == 0]
+pmltestset<-pmltestset[,colSums(is.na(pmltestset)) == 0]
+
+
+# Removing columns like user name, time stamps etc.
+
+pmltrainingset   <-pmltrainingset[,-c(1:7)]
+pmltestset <-pmltestset[,-c(1:7)]
+
+
+#breaking data into Training ,Validation and Test
+
+set.seed(100)
+trainindex<-createDataPartition(pmltrainingset$classe,p=0.8,list = FALSE)
+pmltrainingTrain<-pmltrainingset[trainindex,]
+pmltrainingTest<-pmltrainingset[-trainindex,]
+
+set.seed(200)
+trainindex2<-createDataPartition(pmltrainingTrain$classe,p=0.8,list = FALSE)
+pmltrainingVal<-pmltrainingTrain[-trainindex2,]
+pmltrainingTrain<-pmltrainingTrain[trainindex2,]
+
+```
+
+## Exploratory Data Analysis
+
+```{r EDA}
+dim(pmltrainingset)
+
+str(pmltrainingTrain)
+
+table(pmltrainingTrain$classe)/length(pmltrainingTrain$classe)
+
+```
+ Classes appear to be balanced.
+ 
+## Model Creation
+
+### Random Forest with 5 K-Fold cross validation
+```{r Randomforest,cache=TRUE}
+control <- trainControl(method='cv', 
+                        number=5,
+                        search = 'random')
+set.seed(201)
+rf_random <- train(classe ~ .,data = pmltrainingTrain,method = 'rf',        metric = 'Accuracy',tuneLength  = 15,trControl = control)
+
+
+print(rf_random)
+
+```
+ Final model selected with mtry of 7.
+Accuracy and Kappa of final model are high at 0.9921191 and 0.9900303 respectively.
+
+```{r RandomForestdetails}
+plot(rf_random)
+
+Impobj<-varImp(rf_random)
+
+plot(Impobj, main = "Importance of Top 30 Variables", top = 30)
+
+
+```
+
+Potential for optimization of predictors considered for model exists and a model with top 30 predictors can be tried for further tuning.
+
+```{r OOBerror}
+cm<-rf_random$finalModel$confusion
+cm <- cm[, -ncol(cm)]
+1 - sum(diag(cm)) / sum(cm)
+
+```
+
+OOB error estimate is 0.57% which is good.
+
+### Boosted Tree with 5 K-Fold cross validation
+```{r Boostedtree,cache=TRUE}
+
+library(gbm)
+
+control <- trainControl(method='cv', 
+                        number=5
+                       )
+set.seed(202)
+tree_boost <- train(classe ~ .,data = pmltrainingTrain,method = 'gbm',trControl = control,verbose = FALSE)
+
+
+print(tree_boost)
+
+```
+
+Final Model of interaction depth of 3 and ntrees of 150 was selected.
+Accuracy and Kappa of the model stand at 0.9604353 and 0.9499452 respectively which is lower than random forest.
+
+
+## Validation set performance
+
+### Random Forest Validation set performance
+
+```{r ValidationsetperformanceRandomForest}
+
+predRF<- predict(rf_random,pmltrainingVal)
+
+confusionMatrix(predRF,as.factor(pmltrainingVal$classe))
+
+```
+
+Random Forest showed a good accuracy at  0.9968 .
+
+### Boosted Tree Validation set performance
+
+```{r ValidationsetperformanceBosstedTrees}
+
+predBoost<- predict(tree_boost,pmltrainingVal)
+
+confusionMatrix(predBoost,as.factor(pmltrainingVal$classe))
+
+```
+
+Boosted Tree showed an accuracy of 0.9649  which is less than Random Forest
+
+## Model Stacking of Random Forest and Boosted Tree models
+
+```{r Combinedmodel, cache=TRUE}
+#creating a data fram of predicted values of RF and Boosted Tree along with 
+# classe
+
+predDF<-data.frame(predrf=predRF,predboost=predBoost,classe=pmltrainingVal$classe)
+
+set.seed(203)
+Combinedmodelfit<-train(classe~.,method="rf",data = predDF)
+
+predCombined<-predict(Combinedmodelfit,predDF)
+
+confusionMatrix(predCombined,as.factor(pmltrainingVal$classe))
+
+```
+
+Stacked model showed an accuracy of  0.9968  which is same as Random Forest.
+Since we are not adding to Accuracy while compromising on interpretation , we will finalize on Random Forest Model only.
+
+## Performance of Random Forest on Test set created out of Training set
+
+```{r Modeltesting}
+
+confusionMatrix(predict(rf_random,pmltrainingTest),as.factor(pmltrainingTest$classe))
+
+```
+
+Random Forest Model shows an accuracy of 0.9946  in Testing set which is good and in line with performance shown in training.
+
+## Predicting classes for testing data set
+```{r predictionfortestdata}
+
+predict(rf_random,pmltestset)
+
+```
+
+## Conclusion
+
+- Random Forest was found better than Boosted trees. Also Model stacking didn't add to accuracy while increasing complexity hence we went with Random Forest only
+
+- Final Model of Random Forest had mtry of 7 and showed consistently good performance over 99% Accuracy in Training, Validation and Testing
+
+- OOB error estimate was at 0.57% which is good.
